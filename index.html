@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sholat Badung</title>
+<style>
+body{font-family:sans-serif;margin:0;padding:20px;background:#0f3d3e;color:#fff}
+h1{font-size:20px;margin:0 0 4px}
+.row{display:flex;justify-content:space-between;padding:14px;background:#165e60;border-radius:10px;margin:8px 0;font-size:18px}
+#st{font-size:13px;opacity:.85;margin-top:16px}
+button{width:100%;padding:14px;font-size:16px;border:0;border-radius:10px;margin-top:12px}
+</style></head><body>
+<h1>Jadwal Sholat</h1>
+<div>Badung, Bali (WITA)</div>
+<div id="list"></div>
+<button onclick="init()">Perbarui &amp; Atur Alarm</button>
+<div id="st"></div>
+<script>
+const LN = (window.Capacitor && Capacitor.isNativePlatform()) ? Capacitor.registerPlugin('LocalNotifications') : null;
+const LAT = -8.5819, LNG = 115.1770;
+const NAMES = {Fajr:'Subuh', Dhuhr:'Dzuhur', Asr:'Ashar', Maghrib:'Maghrib', Isha:'Isya'};
+const $ = id => document.getElementById(id);
+const pad = n => String(n).padStart(2,'0');
+const fmt = d => pad(d.getDate())+'-'+pad(d.getMonth()+1)+'-'+d.getFullYear();
+
+async function getMonth(y, m){
+  const u = `https://api.aladhan.com/v1/calendar/${y}/${m}?latitude=${LAT}&longitude=${LNG}&method=20&timezonestring=Asia/Makassar`;
+  const r = await fetch(u);
+  const j = await r.json();
+  return j.data;
+}
+function toDate(dStr, t){
+  const [d,m,y] = dStr.split('-').map(Number);
+  const [hh,mm] = t.split(' ')[0].split(':').map(Number);
+  return new Date(y, m-1, d, hh, mm);
+}
+
+async function init(){
+  try{
+    $('st').textContent = 'Mengambil jadwal...';
+    const now = new Date();
+    let days = await getMonth(now.getFullYear(), now.getMonth()+1);
+    const nx = new Date(now.getFullYear(), now.getMonth()+1, 1);
+    days = days.concat(await getMonth(nx.getFullYear(), nx.getMonth()+1));
+
+    const today = days.find(d => d.date.gregorian.date === fmt(now));
+    if(today){
+      $('list').innerHTML = Object.keys(NAMES).map(k =>
+        `<div class="row"><span>${NAMES[k]}</span><b>${today.timings[k].split(' ')[0]}</b></div>`).join('');
+    }
+
+    const limit = new Date(now.getTime() + 14*864e5);
+    const items = [];
+    for(const day of days){
+      for(const k in NAMES){
+        const at = toDate(day.date.gregorian.date, day.timings[k]);
+        if(at > now && at < limit) items.push({name: NAMES[k], at});
+      }
+    }
+
+    if(!LN){ $('st').textContent = 'Jadwal tampil (alarm hanya aktif di aplikasi Android).'; return; }
+
+    const p = await LN.requestPermissions();
+    if(p.display !== 'granted'){ $('st').textContent = 'Izin notifikasi ditolak. Aktifkan di Pengaturan HP.'; return; }
+
+    await LN.createChannel({id:'adzan', name:'Waktu Sholat', importance:5, visibility:1, vibration:true});
+    const pend = await LN.getPending();
+    if(pend.notifications.length) await LN.cancel({notifications: pend.notifications});
+
+    await LN.schedule({notifications: items.map((it,i) => ({
+      id: i+1,
+      title: 'Waktu ' + it.name,
+      body: 'Sudah masuk waktu ' + it.name + ' (Badung)',
+      channelId: 'adzan',
+      schedule: {at: it.at, allowWhileIdle: true}
+    }))});
+
+    $('st').textContent = 'Alarm aktif untuk ' + items.length + ' waktu sholat ke depan (14 hari).';
+  }catch(e){
+    $('st').textContent = 'Gagal: ' + e.message + ' (cek internet)';
+  }
+}
+init();
+</script>
+</body></html>
